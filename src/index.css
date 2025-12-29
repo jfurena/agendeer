@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-navy: #0B2447;
+  /* Deep Navy from text */
+  --color-brand-blue: #19A7CE;
+  /* Bright Cyan/Blue from icon */
+  --color-brand-light: #F0F9FF;
+  /* Very light blue background */
+}
+
+/* Custom Utilities */
+.mobile-hover-visible {
+  @media (pointer: coarse) {
+    opacity: 1 !important;
+  }
+}
+
+/* Global Styles */
+body {
+  background-color: var(--color-gray-50);
+}
