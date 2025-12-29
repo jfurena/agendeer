@@ -2,268 +2,330 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db, auth } from '../lib/firebase';
 import { collection, addDoc, query, where, onSnapshot, updateDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
-import { LogOut, Plus, Trash2, Circle, Calendar as CalendarIcon, Archive, RefreshCcw, Pencil, X, Save, List, Grid, Filter, Tag, ArrowUpDown, XCircle, ChevronUp, ChevronDown, Check } from 'lucide-react';
+import { LogOut, Plus, Trash2, Circle, Calendar as CalendarIcon, Archive, RefreshCcw, Pencil, X, Save, List, Grid, Filter, Tag, ArrowUpDown, XCircle, ChevronUp, ChevronDown, Check, Repeat, Settings } from 'lucide-react';
 import TrafficLightPriority from '../components/TrafficLightPriority';
 import GoogleCalendarBtn from '../components/GoogleCalendarBtn';
 import CalendarView from '../components/CalendarView';
-import { format, differenceInDays, parseISO } from 'date-fns';
+import { format, differenceInDays, parseISO, getDate, isSameMonth, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export default function Dashboard() {
     const { currentUser } = useAuth();
     const [tasks, setTasks] = useState([]);
+    const [loading, setLoading] = useState(true);
 
-    // New Task Form State
+    // Form inputs
     const [newTask, setNewTask] = useState('');
     const [priority, setPriority] = useState('medium');
     const [date, setDate] = useState('');
-    const [newTags, setNewTags] = useState([]);
     const [tagInput, setTagInput] = useState('');
+    const [newTags, setNewTags] = useState([]);
+    const [isRecurring, setIsRecurring] = useState(false); // NEW: Recurrence Toggle
 
-    const [loading, setLoading] = useState(true);
-
-    // View & Filter States
-    const [activeTab, setActiveTab] = useState('pending');
-    const [viewMode, setViewMode] = useState('list');
+    // UI State
+    const [activeTab, setActiveTab] = useState('pending'); // 'pending' | 'completed'
+    const [viewMode, setViewMode] = useState('list'); // 'list' | 'calendar'
+    const [showAddForm, setShowAddForm] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
-    const [showReorder, setShowReorder] = useState(false); // New: Toggle Reorder Mode/Modal
+    const [showReorder, setShowReorder] = useState(false);
 
-    // Filter Options - CHANGED DEFAULT TO PRIORITY
-    const [sortBy, setSortBy] = useState('priority');
+    // Filters & Sort
     const [filterTag, setFilterTag] = useState('all');
     const [filterPriority, setFilterPriority] = useState('all');
+    const [sortBy, setSortBy] = useState('priority'); // 'priority', 'manual', 'createdAt', 'dueDate', 'alphabetical'
 
-    // Editing state
+    // Editing State
     const [editingId, setEditingId] = useState(null);
     const [editText, setEditText] = useState('');
     const [editDate, setEditDate] = useState('');
+    const [editPriority, setEditPriority] = useState('medium');
     const [editTags, setEditTags] = useState([]);
     const [editTagInput, setEditTagInput] = useState('');
 
     // Reorder State
     const [reorderList, setReorderList] = useState({ high: [], medium: [], low: [] });
 
+    // --- Helpers for Dynamic Priority ---
+    const calculateDynamicPriority = (task) => {
+        if (!task.recurrence) return task.priority;
+
+        const todayDay = getDate(new Date());
+        const base = task.recurrence.basePriority;
+
+        if (base === 'medium') {
+            // Yellow (1-15) -> Red (16+)
+            return todayDay <= 15 ? 'medium' : 'high';
+        }
+        if (base === 'low') {
+            // Green (1-10) -> Yellow (11-20) -> Red (21+)
+            if (todayDay <= 10) return 'low';
+            if (todayDay <= 20) return 'medium';
+            return 'high';
+        }
+        return base; // Default fallback
+    };
+
+    // --- Effects ---
+
     useEffect(() => {
         if (!currentUser) return;
 
         const q = query(
             collection(db, 'todos'),
-            where('userId', '==', currentUser.uid)
+            where('uid', '==', currentUser.uid)
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const taskList = snapshot.docs.map(doc => {
-                const data = doc.data();
-                let tags = data.tags || [];
-                if (data.tag && tags.length === 0) tags = [data.tag];
+            const todosData = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
 
-                return {
-                    id: doc.id,
-                    ...data,
-                    tags: tags,
-                    // Ensure order field exists, default to 0 if missing (older tasks)
-                    order: typeof data.order === 'number' ? data.order : 0
-                };
+            // Validate Recurring Tasks Reset Logic
+            // If a recurring task is completed but the completion date was in a PREVIOUS month, reset it.
+            const now = new Date();
+            todosData.forEach(task => {
+                if (task.completed && task.recurrence && task.completedAt) {
+                    const completedDate = parseISO(task.completedAt);
+                    if (!isSameMonth(completedDate, now) && completedDate < now) {
+                        // Reset the task for the new month
+                        updateDoc(doc(db, 'todos', task.id), {
+                            completed: false,
+                            completedAt: null
+                        }).catch(err => console.error("Error resetting recurring task:", err));
+                    }
+                }
             });
-            setTasks(taskList);
-            cleanupExpiredTasks(taskList);
-            setLoading(false);
-        }, (error) => {
-            console.error("Error fetching tasks:", error);
+
+            setTasks(todosData);
             setLoading(false);
         });
 
         return () => unsubscribe();
     }, [currentUser]);
 
-    // Derived State: Process tasks
-    const processedTasks = useMemo(() => {
-        let result = tasks;
-
-        if (activeTab === 'pending') result = result.filter(t => !t.completed);
-        else result = result.filter(t => t.completed);
-
-        if (filterTag !== 'all') {
-            result = result.filter(t => t.tags && t.tags.includes(filterTag));
+    // Initialize Reorder List when simple list changes or drawer opens
+    useEffect(() => {
+        if (showReorder) {
+            const pendingParams = tasks.filter(t => !t.completed);
+            setReorderList({
+                high: pendingParams.filter(t => (calculateDynamicPriority(t) === 'high')).sort((a, b) => (a.order || 0) - (b.order || 0)),
+                medium: pendingParams.filter(t => (calculateDynamicPriority(t) === 'medium')).sort((a, b) => (a.order || 0) - (b.order || 0)),
+                low: pendingParams.filter(t => (calculateDynamicPriority(t) === 'low')).sort((a, b) => (a.order || 0) - (b.order || 0)),
+            });
         }
+    }, [showReorder, tasks]);
 
-        if (filterPriority !== 'all') {
-            result = result.filter(t => t.priority === filterPriority);
-        }
-
-        result.sort((a, b) => {
-            switch (sortBy) {
-                case 'alphabetical':
-                    return a.text.localeCompare(b.text);
-                case 'dueDate':
-                    if (!a.dueDate) return 1;
-                    if (!b.dueDate) return -1;
-                    return a.dueDate.localeCompare(b.dueDate);
-                case 'priority':
-                    // Sort by Priority Group first
-                    const pVal = { high: 3, medium: 2, low: 1 };
-                    const pDiff = (pVal[b.priority] || 0) - (pVal[a.priority] || 0);
-                    if (pDiff !== 0) return pDiff;
-
-                    // Then by Custom Order (Ascending: 0 is top, 1 is next...)
-                    // If orders are equal (e.g. 0), fallback to creation date (newest first)
-                    if (a.order !== b.order) return a.order - b.order;
-
-                    const dateA = a.createdAt || '';
-                    const dateB = b.createdAt || '';
-                    return dateB.localeCompare(dateA);
-
-                case 'createdAt':
-                default:
-                    const dA = a.createdAt || '';
-                    const dB = b.createdAt || '';
-                    return dB.localeCompare(dA);
-            }
-        });
-
-        return result;
-    }, [tasks, activeTab, filterTag, filterPriority, sortBy]);
-
-    const availableTags = useMemo(() => {
-        const allTags = tasks.flatMap(t => t.tags || []);
-        const uniqueTags = new Set(allTags.filter(Boolean));
-        return Array.from(uniqueTags).sort();
-    }, [tasks]);
-
-    const cleanupExpiredTasks = async (taskList) => {
-        // ... (same as before)
-        const now = new Date();
-        const batch = writeBatch(db);
-        let hasDeletions = false;
-        taskList.forEach(task => {
-            if (task.completed && task.completedAt) {
-                if (differenceInDays(now, parseISO(task.completedAt)) > 30) {
-                    batch.delete(doc(db, 'todos', task.id));
-                    hasDeletions = true;
-                }
-            }
-        });
-        if (hasDeletions) try { await batch.commit(); } catch (e) { }
-    };
-
-    const handleAddTagInput = (e, isEdit = false) => {
-        // ... (same logic)
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const val = isEdit ? editTagInput.trim() : tagInput.trim();
-            const currentList = isEdit ? editTags : newTags;
-            if (val && currentList.length < 5 && !currentList.includes(val)) {
-                isEdit ? setEditTags([...editTags, val]) : setNewTags([...newTags, val]);
-                isEdit ? setEditTagInput('') : setTagInput('');
-            }
-        }
-    };
-
-    const removeTag = (tagToRemove, isEdit = false) => {
-        // ... (same logic)
-        isEdit ? setEditTags(editTags.filter(t => t !== tagToRemove)) : setNewTags(newTags.filter(t => t !== tagToRemove));
-    };
+    // --- Helpers ---
 
     const handleAddTask = async (e) => {
         e.preventDefault();
         if (!newTask.trim()) return;
 
-        // Use a simplified epoch as default order so new tasks appear at the end or start?
-        // Request implies manual ordering, so we just give it a default.
-        // Let's give it Date.now() so it's conceptually "last" if we sort ASC.
-        const order = Date.now();
+        try {
+            const recurrenceData = isRecurring ? {
+                type: 'monthly',
+                basePriority: priority
+            } : null;
 
-        await addDoc(collection(db, 'todos'), {
-            text: newTask,
-            priority,
-            dueDate: date,
-            tags: newTags,
-            tag: newTags[0] || '',
-            completed: false,
-            completedAt: null,
-            userId: currentUser.uid,
-            createdAt: new Date().toISOString(),
-            order
-        });
-
-        setNewTask('');
-        setPriority('medium');
-        setDate('');
-        setNewTags([]);
-        setTagInput('');
+            await addDoc(collection(db, 'todos'), {
+                text: newTask,
+                priority,
+                recurrence: recurrenceData, // Save recurrence info
+                dueDate: date,
+                completed: false,
+                createdAt: new Date().toISOString(),
+                uid: currentUser.uid,
+                tags: newTags,
+                tag: newTags[0] || '',
+                order: Date.now()
+            });
+            setNewTask('');
+            setPriority('medium');
+            setDate('');
+            setNewTags([]);
+            setIsRecurring(false);
+            setShowAddForm(false);
+        } catch (error) {
+            console.error("Error adding task:", error);
+        }
     };
 
-    // ... (toggleComplete, deleteTask, editing functions same as before)
     const toggleComplete = async (task) => {
-        const isCompleting = !task.completed;
-        await updateDoc(doc(db, 'todos', task.id), { completed: isCompleting, completedAt: isCompleting ? new Date().toISOString() : null });
+        await updateDoc(doc(db, 'todos', task.id), {
+            completed: !task.completed,
+            completedAt: !task.completed ? new Date().toISOString() : null
+        });
     };
-    const deleteTask = async (id) => { if (window.confirm('Eliminar?')) await deleteDoc(doc(db, 'todos', id)); };
-    const startEditing = (task) => { setEditingId(task.id); setEditText(task.text); setEditDate(task.dueDate || ''); setEditTags(task.tags || []); setEditTagInput(''); };
-    const cancelEditing = () => { setEditingId(null); setEditText(''); setEditDate(''); setEditTags([]); setEditTagInput(''); };
-    const saveEdit = async (id) => { if (!editText.trim()) return; await updateDoc(doc(db, 'todos', id), { text: editText, dueDate: editDate, tags: editTags, tag: editTags[0] || '' }); setEditingId(null); };
-    const handleLogout = () => auth.signOut();
 
-    // --- Reorder Logic ---
-    const openReorderHelper = () => {
-        // Group current pending tasks by priority
-        const pending = tasks.filter(t => !t.completed);
+    const deleteTask = async (id) => {
+        if (window.confirm('¿Estás seguro de eliminar esta tarea?')) {
+            await deleteDoc(doc(db, 'todos', id));
+        }
+    };
 
-        // Sort them by their current order value first to respect current state
-        const sortFn = (a, b) => (a.order || 0) - (b.order || 0);
+    const removeAutomation = async (id) => {
+        if (window.confirm('¿Quieres eliminar la automatización de esta tarea? Dejará de repetirse mensualmente.')) {
+            await updateDoc(doc(db, 'todos', id), {
+                recurrence: null
+            });
+        }
+    };
+
+    // Tag Handling
+    const handleAddTagInput = (e, isEdit) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const val = isEdit ? editTagInput.trim() : tagInput.trim();
+            const currentTags = isEdit ? editTags : newTags;
+            const setTags = isEdit ? setEditTags : setNewTags;
+            const setInput = isEdit ? setEditTagInput : setTagInput;
+
+            if (val && !currentTags.includes(val) && currentTags.length < 5) {
+                setTags([...currentTags, val]);
+                setInput('');
+            }
+        }
+    };
+
+    const removeTag = (tagToRemove, isEdit) => {
+        if (isEdit) {
+            setEditTags(editTags.filter(t => t !== tagToRemove));
+        } else {
+            setNewTags(newTags.filter(t => t !== tagToRemove));
+        }
+    };
+
+    // Edit Logic
+    const startEditing = (task) => {
+        setEditingId(task.id);
+        setEditText(task.text);
+        setEditDate(task.dueDate || '');
+        setEditTags(task.tags || []);
+        setEditTagInput('');
+        setEditPriority(task.priority || 'medium');
+    };
+
+    const cancelEditing = () => {
+        setEditingId(null);
+        setEditText('');
+        setEditDate('');
+        setEditTags([]);
+        setEditTagInput('');
+        setEditPriority('medium');
+    };
+
+    const saveEdit = async (id) => {
+        if (!editText.trim()) return;
+        await updateDoc(doc(db, 'todos', id), {
+            text: editText,
+            dueDate: editDate,
+            tags: editTags,
+            tag: editTags[0] || '',
+            priority: editPriority
+        });
+        setEditingId(null);
+    };
+
+    // Reorder Logic
+    const moveItem = (group, idx, direction) => {
+        const list = [...reorderList[group]];
+        const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (newIdx < 0 || newIdx >= list.length) return;
+
+        const [movedItem] = list.splice(idx, 1);
+        list.splice(newIdx, 0, movedItem);
 
         setReorderList({
-            high: pending.filter(t => t.priority === 'high').sort(sortFn),
-            medium: pending.filter(t => t.priority === 'medium').sort(sortFn),
-            low: pending.filter(t => t.priority === 'low').sort(sortFn),
+            ...reorderList,
+            [group]: list
         });
-        setShowReorder(true);
-    };
-
-    const moveItem = (priorityGroup, index, direction) => {
-        const list = [...reorderList[priorityGroup]];
-        if (direction === 'up' && index > 0) {
-            [list[index], list[index - 1]] = [list[index - 1], list[index]];
-        } else if (direction === 'down' && index < list.length - 1) {
-            [list[index], list[index + 1]] = [list[index + 1], list[index]];
-        }
-        setReorderList({ ...reorderList, [priorityGroup]: list });
     };
 
     const saveReorder = async () => {
-        setLoading(true);
+        // Only updates "visual" order relative to others, dynamic priority is computed
         const batch = writeBatch(db);
-
-        // Assign new order values based on index
-        // We can use a simple index relative to the group, but we want global priority.
-        // Easiest is to keep them independent: Priority High is always above Medium.
-        // So the absolute 'order' value determines position WITHIN the priority group.
-
-        ['high', 'medium', 'low'].forEach(p => {
-            reorderList[p].forEach((task, index) => {
+        ['high', 'medium', 'low'].forEach(group => {
+            reorderList[group].forEach((task, index) => {
                 const ref = doc(db, 'todos', task.id);
                 batch.update(ref, { order: index });
             });
         });
-
-        try {
-            await batch.commit();
-            setShowReorder(false);
-        } catch (e) {
-            console.error("Error saving order:", e);
-        } finally {
-            setLoading(false);
-        }
+        await batch.commit();
+        setShowReorder(false);
+        setSortBy('priority');
     };
 
-    const getPriorityColor = (p) => {
-        if (p === 'low') return 'border-l-4 border-green-500';
-        if (p === 'medium') return 'border-l-4 border-yellow-400';
-        if (p === 'high') return 'border-l-4 border-red-500';
-        return 'border-l-4 border-gray-300';
+    const openReorderHelper = () => {
+        setShowReorder(true);
+    };
+
+    // Auth
+    const handleLogout = () => auth.signOut();
+
+    // Derived State
+    const availableTags = useMemo(() => {
+        const tags = new Set();
+        tasks.forEach(t => t.tags && t.tags.forEach(tag => tags.add(tag)));
+        return Array.from(tags).sort();
+    }, [tasks]);
+
+    const processedTasks = useMemo(() => {
+        let filtered = tasks.filter(t => {
+            if (activeTab === 'pending') return !t.completed;
+            return t.completed;
+        });
+
+        if (filterTag !== 'all') {
+            filtered = filtered.filter(t => t.tags && t.tags.includes(filterTag));
+        }
+
+        if (filterPriority !== 'all') {
+            filtered = filtered.filter(t => calculateDynamicPriority(t) === filterPriority);
+        }
+
+        // Sorting
+        return filtered.sort((a, b) => {
+            if (activeTab === 'completed') {
+                return (new Date(b.completedAt || 0)) - (new Date(a.completedAt || 0));
+            }
+
+            switch (sortBy) {
+                case 'priority':
+                    // Use Dynamic Priority for Sorting
+                    const pA = calculateDynamicPriority(a);
+                    const pB = calculateDynamicPriority(b);
+                    const pWeight = { high: 0, medium: 1, low: 2 };
+
+                    if (pWeight[pA] !== pWeight[pB]) {
+                        return pWeight[pA] - pWeight[pB];
+                    }
+                    return (a.order || 0) - (b.order || 0);
+                case 'createdAt':
+                    return new Date(b.createdAt) - new Date(a.createdAt);
+                case 'dueDate':
+                    if (!a.dueDate) return 1;
+                    if (!b.dueDate) return -1;
+                    return new Date(a.dueDate) - new Date(b.dueDate);
+                case 'alphabetical':
+                    return a.text.localeCompare(b.text);
+                default:
+                    return 0;
+            }
+        });
+    }, [tasks, activeTab, filterTag, filterPriority, sortBy]);
+
+    // Styling
+    const getPriorityColor = (task) => {
+        const effectivePriority = calculateDynamicPriority(task);
+        if (effectivePriority === 'low') return 'bg-green-50 border-l-4 border-green-500';
+        if (effectivePriority === 'medium') return 'bg-yellow-50 border-l-4 border-yellow-400';
+        if (effectivePriority === 'high') return 'bg-red-50 border-l-4 border-red-500';
+        return 'bg-white border-l-4 border-gray-300';
     };
 
     const showCalendar = viewMode === 'calendar' && activeTab === 'pending';
+
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -284,44 +346,86 @@ export default function Dashboard() {
 
                 {/* Input Area */}
                 {activeTab === 'pending' && !showReorder && (
-                    <div className="bg-white rounded-xl shadow-md p-6 mb-6">
-                        <h2 className="text-lg font-semibold mb-4 text-brand-navy border-b pb-2">Nueva Tarea</h2>
-                        {/* Copy existing form code exactly as before */}
-                        <form onSubmit={handleAddTask} className="space-y-4">
-                            <input
-                                type="text"
-                                placeholder="¿Qué tienes pendiente?"
-                                className="w-full text-lg p-3 border-b-2 border-gray-200 focus:border-brand-blue focus:outline-none transition-colors text-gray-700"
-                                value={newTask}
-                                onChange={(e) => setNewTask(e.target.value)}
-                            />
-                            <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
-                                <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center w-full">
-                                    <TrafficLightPriority value={priority} onChange={setPriority} />
-                                    <div className="flex flex-col gap-1 w-full sm:w-auto">
-                                        <div className="flex items-center gap-2">
-                                            <Tag size={18} className="text-gray-400" />
-                                            <input type="text" placeholder={newTags.length >= 5 ? "Max 5 alcanzado" : "Etiqueta + Enter"} value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => handleAddTagInput(e, false)} disabled={newTags.length >= 5} className="bg-gray-50 text-sm p-2 rounded-md outline-none border border-transparent focus:border-brand-blue focus:bg-white transition-all w-full sm:w-48 disabled:bg-gray-100 disabled:cursor-not-allowed" />
-                                        </div>
-                                        {newTags.length > 0 && (
-                                            <div className="flex flex-wrap gap-1 ml-6">
-                                                {newTags.map(tag => (
-                                                    <span key={tag} className="inline-flex items-center text-[10px] bg-brand-light text-brand-navy px-1.5 py-0.5 rounded-full border border-blue-100">
-                                                        {tag}<button type="button" onClick={() => removeTag(tag, false)} className="ml-1 hover:text-red-500">×</button>
-                                                    </span>
-                                                ))}
+                    <div className="mb-6">
+                        {!showAddForm ? (
+                            <button
+                                onClick={() => setShowAddForm(true)}
+                                className="w-full py-4 bg-white border-2 border-dashed border-gray-300 rounded-xl text-gray-500 font-medium hover:border-brand-blue hover:text-brand-blue transition-all flex items-center justify-center gap-2 shadow-sm"
+                            >
+                                <Plus size={24} />
+                                <span>Agregar Nueva Tarea</span>
+                            </button>
+                        ) : (
+                            <div className="bg-white rounded-xl shadow-md p-6 animate-fade-in relative">
+                                <button onClick={() => setShowAddForm(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
+                                    <X size={20} />
+                                </button>
+                                <h2 className="text-lg font-semibold mb-4 text-brand-navy border-b pb-2">Nueva Tarea</h2>
+                                <form onSubmit={handleAddTask} className="space-y-4">
+                                    <input
+                                        type="text"
+                                        placeholder="¿Qué tienes pendiente?"
+                                        className="w-full text-lg p-3 border-b-2 border-gray-200 focus:border-brand-blue focus:outline-none transition-colors text-gray-700"
+                                        value={newTask}
+                                        onChange={(e) => setNewTask(e.target.value)}
+                                        autoFocus
+                                    />
+                                    <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
+                                        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center w-full">
+                                            <div className="flex flex-col gap-2">
+                                                <TrafficLightPriority value={priority} onChange={setPriority} />
+
+                                                {/* RECURRENCE TOGGLE */}
+                                                <div className="flex items-center gap-2 mt-1 px-2">
+                                                    <input
+                                                        type="checkbox"
+                                                        id="recurring"
+                                                        checked={isRecurring}
+                                                        onChange={(e) => setIsRecurring(e.target.checked)}
+                                                        className="w-4 h-4 text-brand-blue rounded border-gray-300 focus:ring-brand-blue"
+                                                    />
+                                                    <label htmlFor="recurring" className="text-sm text-gray-600 flex items-center gap-1 cursor-pointer select-none">
+                                                        <Repeat size={14} className={isRecurring ? "text-brand-blue" : "text-gray-400"} />
+                                                        Repetir Mensualmente
+                                                    </label>
+                                                </div>
+                                                {isRecurring && (
+                                                    <p className="text-[10px] text-gray-400 pl-2 max-w-[200px]">
+                                                        {priority === 'medium'
+                                                            ? "Amarillo hasta día 15, luego Rojo."
+                                                            : priority === 'low'
+                                                                ? "Verde (10d) -> Amarillo (10d) -> Rojo"
+                                                                : "Siempre prioridad Alta"}
+                                                    </p>
+                                                )}
                                             </div>
-                                        )}
+
+                                            <div className="flex flex-col gap-1 w-full sm:w-auto">
+                                                <div className="flex items-center gap-2">
+                                                    <Tag size={18} className="text-gray-400" />
+                                                    <input type="text" placeholder={newTags.length >= 5 ? "Max 5 alcanzado" : "Etiqueta + Enter"} value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => handleAddTagInput(e, false)} disabled={newTags.length >= 5} className="bg-gray-50 text-sm p-2 rounded-md outline-none border border-transparent focus:border-brand-blue focus:bg-white transition-all w-full sm:w-48 disabled:bg-gray-100 disabled:cursor-not-allowed" />
+                                                </div>
+                                                {newTags.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1 ml-6">
+                                                        {newTags.map(tag => (
+                                                            <span key={tag} className="inline-flex items-center text-[10px] bg-brand-light text-brand-navy px-1.5 py-0.5 rounded-full border border-blue-100">
+                                                                {tag}<button type="button" onClick={() => removeTag(tag, false)} className="ml-1 hover:text-red-500">×</button>
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-end sm:items-center">
+                                            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="p-2 border rounded-md text-gray-600 focus:ring-1 focus:ring-brand-blue outline-none w-full sm:w-auto" />
+                                            <button type="submit" disabled={!newTask} className="bg-brand-navy hover:bg-brand-blue text-white px-6 py-2 rounded-full font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center w-full sm:w-auto shadow-md hover:shadow-lg">
+                                                <Plus size={18} className="mr-1" /> Agregar
+                                            </button>
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-end sm:items-center">
-                                    <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="p-2 border rounded-md text-gray-600 focus:ring-1 focus:ring-brand-blue outline-none w-full sm:w-auto" />
-                                    <button type="submit" disabled={!newTask} className="bg-brand-navy hover:bg-brand-blue text-white px-6 py-2 rounded-full font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center w-full sm:w-auto shadow-md hover:shadow-lg">
-                                        <Plus size={18} className="mr-1" /> Agregar
-                                    </button>
-                                </div>
+                                </form>
                             </div>
-                        </form>
+                        )}
                     </div>
                 )}
 
@@ -355,7 +459,7 @@ export default function Dashboard() {
                             )}
                         </div>
 
-                        {/* Filter Menu (Reuse existing code) */}
+                        {/* Filter Menu */}
                         {showFilters && activeTab === 'pending' && (
                             <div className="bg-white p-4 rounded-xl shadow-inner border border-gray-100 flex flex-col sm:flex-row gap-4">
                                 <div className="flex-1">
@@ -375,7 +479,7 @@ export default function Dashboard() {
                     </div>
                 )}
 
-                {/* Reorder Drawer - NEW */}
+                {/* Reorder Drawer */}
                 {showReorder && (
                     <div className="bg-white rounded-xl shadow-lg p-6 mb-6 border-2 border-brand-light">
                         <div className="flex justify-between items-center mb-4 border-b pb-2">
@@ -434,30 +538,37 @@ export default function Dashboard() {
                             </div>
                         ) : (
                             processedTasks.map(task => (
-                                <div key={task.id} className={`bg-white p-4 rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-center justify-between group transition-all hover:shadow-md ${getPriorityColor(task.priority)} ${task.completed ? 'opacity-75 bg-gray-50' : ''}`}>
+                                <div key={task.id} className={`p-4 rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-center justify-between group transition-all hover:shadow-md ${task.completed ? 'bg-gray-100 opacity-75' : getPriorityColor(task)}`}>
                                     <div className="flex items-start sm:items-center gap-3 flex-1 w-full">
-                                        <button onClick={() => toggleComplete(task)} className={`mt-1 sm:mt-0 transition-colors ${task.completed ? 'text-green-500' : 'text-gray-300 hover:text-brand-blue'}`} disabled={editingId === task.id}>{task.completed ? <RefreshCcw size={24} /> : <Circle size={24} />}</button>
+                                        <button onClick={() => toggleComplete(task)} className={`mt-1 sm:mt-0 transition-colors ${task.completed ? 'text-green-500' : 'text-gray-400 hover:text-brand-blue'}`} disabled={editingId === task.id}>{task.completed ? <RefreshCcw size={24} /> : <Circle size={24} />}</button>
                                         <div className="flex-1 w-full min-w-0">
                                             {editingId === task.id ? (
-                                                // Edit Form (Reuse existing)
-                                                <div className="flex flex-col gap-2 w-full mr-2">
-                                                    <input type="text" value={editText} onChange={(e) => setEditText(e.target.value)} className="w-full p-1 border-b-2 border-brand-blue outline-none text-lg text-gray-800" autoFocus onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(task.id); if (e.key === 'Escape') cancelEditing(); }} />
+                                                <div className="flex flex-col gap-3 w-full mr-2">
+                                                    <input type="text" value={editText} onChange={(e) => setEditText(e.target.value)} className="w-full p-2 bg-white/50 border-b-2 border-brand-blue outline-none text-lg text-gray-800 rounded-t" autoFocus onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(task.id); if (e.key === 'Escape') cancelEditing(); }} />
+
+                                                    {/* NEW: Priority Editor inside Edit Mode */}
+                                                    <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                                                        <TrafficLightPriority value={editPriority} onChange={setEditPriority} />
+                                                    </div>
+
                                                     <div className="flex flex-wrap items-center gap-3">
-                                                        <div className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded"><CalendarIcon size={14} className="text-gray-400" /><input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="bg-transparent outline-none text-sm text-gray-600" /></div>
+                                                        <div className="flex items-center gap-1 bg-white/50 px-2 py-1 rounded border border-gray-200"><CalendarIcon size={14} className="text-gray-400" /><input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="bg-transparent outline-none text-sm text-gray-600" /></div>
                                                         <div className="flex flex-col gap-1 w-full sm:w-auto">
-                                                            <div className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded w-full sm:w-auto"><Tag size={14} className="text-gray-400" /><input type="text" placeholder="Máx 5" value={editTagInput} onChange={(e) => setEditTagInput(e.target.value)} onKeyDown={(e) => handleAddTagInput(e, true)} disabled={editTags.length >= 5} className="bg-transparent outline-none text-sm text-gray-600 w-full sm:w-28 disabled:cursor-not-allowed" /></div>
+                                                            <div className="flex items-center gap-1 bg-white/50 px-2 py-1 rounded border border-gray-200 w-full sm:w-auto"><Tag size={14} className="text-gray-400" /><input type="text" placeholder="Máx 5" value={editTagInput} onChange={(e) => setEditTagInput(e.target.value)} onKeyDown={(e) => handleAddTagInput(e, true)} disabled={editTags.length >= 5} className="bg-transparent outline-none text-sm text-gray-600 w-full sm:w-28 disabled:cursor-not-allowed" /></div>
                                                             <div className="flex flex-wrap gap-1">
-                                                                {editTags.map(tag => (<span key={tag} className="inline-flex items-center text-[10px] bg-brand-light text-brand-navy px-1.5 py-0.5 rounded-full border border-blue-100">{tag}<button onClick={() => removeTag(tag, true)} className="ml-1 hover:text-red-500">×</button></span>))}
+                                                                {editTags.map(tag => (<span key={tag} className="inline-flex items-center text-[10px] bg-white text-brand-navy px-1.5 py-0.5 rounded-full border border-gray-200">{tag}<button onClick={() => removeTag(tag, true)} className="ml-1 hover:text-red-500">×</button></span>))}
                                                             </div>
                                                         </div>
                                                     </div>
                                                 </div>
                                             ) : (
-                                                // Display Logic
                                                 <div className="flex flex-col gap-0.5">
-                                                    <p className={`text-lg transition-all break-words ${task.completed ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.text}</p>
+                                                    <div className="flex items-center gap-2">
+                                                        <p className={`text-lg transition-all break-words ${task.completed ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.text}</p>
+                                                        {task.recurrence && activeTab === 'pending' && <Repeat size={14} className="text-brand-blue" title="Se repite mensualmente" />}
+                                                    </div>
                                                     {task.tags && task.tags.length > 0 && (
-                                                        <div className="flex flex-wrap gap-1">{task.tags.map(tag => (<span key={tag} onClick={() => activeTab === 'pending' && !editingId && setFilterTag(tag)} className={`inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full bg-brand-light text-brand-navy border border-blue-100 ${activeTab === 'pending' && !editingId ? 'cursor-pointer hover:bg-blue-100' : ''}`}># {tag}</span>))}</div>
+                                                        <div className="flex flex-wrap gap-1">{task.tags.map(tag => (<span key={tag} onClick={() => activeTab === 'pending' && !editingId && setFilterTag(tag)} className={`inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full bg-white/60 text-brand-navy border border-black/5 ${activeTab === 'pending' && !editingId ? 'cursor-pointer hover:bg-white' : ''}`}># {tag}</span>))}</div>
                                                     )}
                                                 </div>
                                             )}
@@ -480,6 +591,11 @@ export default function Dashboard() {
                                             </div>
                                         ) : (
                                             <div className="flex items-center justify-end w-full sm:w-auto gap-1">
+                                                {/* Automation Management */}
+                                                {task.recurrence && !task.completed && (
+                                                    <button onClick={() => removeAutomation(task.id)} className="p-2 text-gray-400 hover:text-purple-500 transition-colors flex items-center" title="Configurar Automatización"><Settings size={18} /></button>
+                                                )}
+
                                                 {!task.completed && <button onClick={() => startEditing(task)} className="p-2 text-gray-400 hover:text-brand-blue transition-colors flex items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100"><Pencil size={18} /><span className="sm:hidden ml-1 text-sm">Editar</span></button>}
                                                 <button onClick={() => deleteTask(task.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors flex items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100"><Trash2 size={18} /><span className="sm:hidden ml-1 text-sm">Eliminar</span></button>
                                             </div>
@@ -489,6 +605,16 @@ export default function Dashboard() {
                             ))
                         )}
                     </div>
+                )}
+
+                {/* Fixed FAB for Mobile */}
+                {activeTab === 'pending' && !showAddForm && !showReorder && (
+                    <button
+                        onClick={() => setShowAddForm(true)}
+                        className="sm:hidden fixed bottom-6 right-6 w-14 h-14 bg-brand-navy text-white rounded-full shadow-xl flex items-center justify-center z-50 hover:scale-110 transition-transform"
+                    >
+                        <Plus size={32} />
+                    </button>
                 )}
             </main>
         </div>
