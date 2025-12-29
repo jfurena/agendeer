@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react'; // v2.0.1 Navbar Fixed
 import { useAuth } from '../context/AuthContext';
 import { db, auth } from '../lib/firebase';
 import { collection, addDoc, query, where, onSnapshot, updateDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
@@ -641,30 +641,30 @@ export default function Dashboard() {
                                                 <div className="relative">
                                                     {activeActionMenuId === task.id ? (
                                                         /* Expanded Menu */
-                                                        <div className="flex items-center gap-1 bg-white p-1 rounded-lg shadow-md border border-gray-200 animate-fade-in absolute right-0 -top-1 sm:-top-1.5 z-10 w-max">
+                                                        <div className="flex items-center gap-1 bg-white p-1 rounded-lg shadow-xl border border-gray-200 animate-fade-in absolute right-0 -top-2 z-50 w-max">
 
                                                             {/* Automation - Only if recurring */}
                                                             {task.recurrence && !task.completed && (
-                                                                <button onClick={() => removeAutomation(task.id)} className="p-2 text-purple-500 hover:bg-purple-50 rounded-full" title="Configurar"><Settings size={18} /></button>
+                                                                <button onClick={() => removeAutomation(task.id)} className="p-2 text-purple-600 hover:bg-purple-50 rounded-full" title="Configurar"><Settings size={20} /></button>
                                                             )}
 
                                                             {/* Edit - Only if pending */}
                                                             {!task.completed && (
-                                                                <button onClick={() => startEditing(task)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-full" title="Editar"><Pencil size={18} /></button>
+                                                                <button onClick={() => startEditing(task)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-full" title="Editar"><Pencil size={20} /></button>
                                                             )}
 
                                                             {/* Delete - Always */}
-                                                            <button onClick={() => deleteTask(task.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-full" title="Eliminar"><Trash2 size={18} /></button>
+                                                            <button onClick={() => deleteTask(task.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-full" title="Eliminar"><Trash2 size={20} /></button>
 
                                                             {/* Close Menu */}
-                                                            <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                                                            <button onClick={() => setActiveActionMenuId(null)} className="p-1 px-2 text-gray-400 hover:text-gray-600"><X size={14} /></button>
+                                                            <div className="w-px h-6 bg-gray-200 mx-1"></div>
+                                                            <button onClick={() => setActiveActionMenuId(null)} className="p-2 text-gray-500 hover:text-gray-700"><X size={18} /></button>
                                                         </div>
                                                     ) : (
-                                                        /* Settings Trigger Icon */
+                                                        /* Settings Trigger Icon - High Contrast */
                                                         <button
                                                             onClick={(e) => { e.stopPropagation(); setActiveActionMenuId(activeActionMenuId === task.id ? null : task.id); }}
-                                                            className="p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-blue rounded-full transition-colors"
+                                                            className="p-2 text-gray-600 bg-gray-100 hover:bg-brand-blue hover:text-white rounded-full transition-all shadow-sm"
                                                         >
                                                             <Settings size={20} />
                                                         </button>
