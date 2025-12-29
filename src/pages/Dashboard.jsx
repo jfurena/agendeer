@@ -81,18 +81,14 @@ export default function Dashboard() {
                 ...doc.data()
             }));
 
-            // 1. Update UI immediately so user sees tasks
             setTasks(todosData);
             setLoading(false);
 
-            // 2. Run Background Maintenance (Reset Recurring Tasks)
-            // Wrap in try-catch to prevent UI from freezing/crashing if this fails
             try {
                 const now = new Date();
                 todosData.forEach(task => {
                     if (task.completed && task.recurrence && task.completedAt) {
                         const completedDate = parseISO(task.completedAt);
-                        // Check if completed in a previous month
                         if (!isSameMonth(completedDate, now) && completedDate < now) {
                             console.log("Resetting recurring task:", task.text);
                             updateDoc(doc(db, 'todos', task.id), {
@@ -348,119 +344,130 @@ export default function Dashboard() {
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">
-            <nav className="bg-white shadow-sm p-4 flex justify-between items-center sticky top-0 z-10">
+            <nav className="bg-white shadow-sm p-4 flex justify-between items-center sticky top-0 z-50">
                 <h1 className="text-xl font-bold text-brand-navy flex items-center">
                     <img src="/logo.png" alt="Agendeer Logo" className="h-10 w-auto mr-2 object-contain" />
-                    <span className="tracking-tight uppercase">Agendeer</span>
+                    <span className="tracking-tight uppercase hidden sm:inline">Agendeer</span>
                 </h1>
-                <div className="flex items-center gap-4">
-                    <span className="text-sm text-gray-600 hidden sm:block">{currentUser?.email}</span>
-                    <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 transition-colors" title="Cerrar Sesión">
-                        <LogOut size={20} />
-                    </button>
+
+                {/* NEW: Counters in Navbar */}
+                <div className="flex items-center gap-4 flex-1 justify-end">
+                    {activeTab === 'pending' && (
+                        <div className="flex items-center gap-2 sm:gap-4 mr-2 sm:mr-4">
+                            <div className="flex items-center gap-1" title="Prioridad Alta">
+                                <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-red-500"></div>
+                                <span className="text-xs sm:text-sm font-bold text-gray-700">{priorityCounts.high}</span>
+                            </div>
+                            <div className="flex items-center gap-1" title="Prioridad Media">
+                                <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-yellow-400"></div>
+                                <span className="text-xs sm:text-sm font-bold text-gray-700">{priorityCounts.medium}</span>
+                            </div>
+                            <div className="flex items-center gap-1" title="Prioridad Baja">
+                                <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-green-500"></div>
+                                <span className="text-xs sm:text-sm font-bold text-gray-700">{priorityCounts.low}</span>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="h-6 w-px bg-gray-200 hidden sm:block"></div>
+
+                    <div className="flex items-center gap-2 sm:gap-4">
+                        <span className="text-xs sm:text-sm text-gray-600 hidden sm:block max-w-[150px] truncate">{currentUser?.email}</span>
+                        <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 transition-colors p-1" title="Cerrar Sesión">
+                            <LogOut size={20} />
+                        </button>
+                    </div>
                 </div>
             </nav>
 
-            <main className="flex-1 max-w-4xl mx-auto w-full p-4">
+            <main className="flex-1 max-w-4xl mx-auto w-full p-4 relative">
 
-                {/* Input Area / Counters */}
-                {activeTab === 'pending' && !showReorder && (
-                    <div className="mb-6">
-                        {!showAddForm ? (
-                            // NEW: Counters display instead of Big Button
-                            <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-2">
-                                <div className="bg-white p-3 rounded-xl shadow-sm border-l-4 border-red-500 flex flex-col items-center">
-                                    <span className="text-2xl font-bold text-gray-800">{priorityCounts.high}</span>
-                                    <span className="text-xs text-gray-500 uppercase tracking-wide">Altas</span>
-                                </div>
-                                <div className="bg-white p-3 rounded-xl shadow-sm border-l-4 border-yellow-400 flex flex-col items-center">
-                                    <span className="text-2xl font-bold text-gray-800">{priorityCounts.medium}</span>
-                                    <span className="text-xs text-gray-500 uppercase tracking-wide">Medias</span>
-                                </div>
-                                <div className="bg-white p-3 rounded-xl shadow-sm border-l-4 border-green-500 flex flex-col items-center">
-                                    <span className="text-2xl font-bold text-gray-800">{priorityCounts.low}</span>
-                                    <span className="text-xs text-gray-500 uppercase tracking-wide">Bajas</span>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="bg-white rounded-xl shadow-md p-6 animate-fade-in relative transition-all">
-                                <button onClick={() => setShowAddForm(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
-                                    <X size={20} />
+                {/* Main Add Task Modal (No inline counters anymore) */}
+                {showAddForm && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fade-in" onClick={() => setShowAddForm(false)}>
+                        <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+                            <div className="flex justify-between items-center mb-4 border-b pb-2">
+                                <h2 className="text-lg font-semibold text-brand-navy">Nueva Tarea</h2>
+                                <button onClick={() => setShowAddForm(false)} className="text-gray-400 hover:text-gray-600">
+                                    <X size={24} />
                                 </button>
-                                <h2 className="text-lg font-semibold mb-4 text-brand-navy border-b pb-2">Nueva Tarea</h2>
-                                <form onSubmit={handleAddTask} className="space-y-4">
-                                    <input
-                                        type="text"
-                                        placeholder="¿Qué tienes pendiente?"
-                                        className="w-full text-lg p-3 border-b-2 border-gray-200 focus:border-brand-blue focus:outline-none transition-colors text-gray-700"
-                                        value={newTask}
-                                        onChange={(e) => setNewTask(e.target.value)}
-                                        autoFocus
-                                    />
-                                    <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
-                                        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center w-full">
-                                            <div className="flex flex-col gap-2">
-                                                <TrafficLightPriority value={priority} onChange={setPriority} />
-
-                                                {/* RECURRENCE TOGGLE */}
-                                                <div className="flex items-center gap-2 mt-1 px-2">
-                                                    <input
-                                                        type="checkbox"
-                                                        id="recurring"
-                                                        checked={isRecurring}
-                                                        onChange={(e) => setIsRecurring(e.target.checked)}
-                                                        className="w-4 h-4 text-brand-blue rounded border-gray-300 focus:ring-brand-blue"
-                                                    />
-                                                    <label htmlFor="recurring" className="text-sm text-gray-600 flex items-center gap-1 cursor-pointer select-none">
-                                                        <Repeat size={14} className={isRecurring ? "text-brand-blue" : "text-gray-400"} />
-                                                        Repetir Mensualmente
-                                                    </label>
-                                                </div>
-                                                {isRecurring && (
-                                                    <p className="text-[10px] text-gray-400 pl-2 max-w-[200px]">
-                                                        {priority === 'medium'
-                                                            ? "Amarillo hasta día 15, luego Rojo."
-                                                            : priority === 'low'
-                                                                ? "Verde (10d) -> Amarillo (10d) -> Rojo"
-                                                                : "Siempre prioridad Alta"}
-                                                    </p>
-                                                )}
-                                            </div>
-
-                                            <div className="flex flex-col gap-1 w-full sm:w-auto">
-                                                <div className="flex items-center gap-2">
-                                                    <Tag size={18} className="text-gray-400" />
-                                                    <input type="text" placeholder={newTags.length >= 5 ? "Max 5 alcanzado" : "Etiqueta + Enter"} value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => handleAddTagInput(e, false)} disabled={newTags.length >= 5} className="bg-gray-50 text-sm p-2 rounded-md outline-none border border-transparent focus:border-brand-blue focus:bg-white transition-all w-full sm:w-48 disabled:bg-gray-100 disabled:cursor-not-allowed" />
-                                                </div>
-                                                {newTags.length > 0 && (
-                                                    <div className="flex flex-wrap gap-1 ml-6">
-                                                        {newTags.map(tag => (
-                                                            <span key={tag} className="inline-flex items-center text-[10px] bg-brand-light text-brand-navy px-1.5 py-0.5 rounded-full border border-blue-100">
-                                                                {tag}<button type="button" onClick={() => removeTag(tag, false)} className="ml-1 hover:text-red-500">×</button>
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-end sm:items-center">
-                                            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="p-2 border rounded-md text-gray-600 focus:ring-1 focus:ring-brand-blue outline-none w-full sm:w-auto" />
-                                            <button type="submit" disabled={!newTask} className="bg-brand-navy hover:bg-brand-blue text-white px-6 py-2 rounded-full font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center w-full sm:w-auto shadow-md hover:shadow-lg">
-                                                <Plus size={18} className="mr-1" /> Agregar
-                                            </button>
-                                        </div>
-                                    </div>
-                                </form>
                             </div>
-                        )}
+                            <form onSubmit={handleAddTask} className="space-y-4">
+                                <input
+                                    type="text"
+                                    placeholder="¿Qué tienes pendiente?"
+                                    className="w-full text-lg p-3 border-b-2 border-gray-200 focus:border-brand-blue focus:outline-none transition-colors text-gray-700"
+                                    value={newTask}
+                                    onChange={(e) => setNewTask(e.target.value)}
+                                    autoFocus
+                                />
+                                <div className="flex flex-col gap-4">
+
+                                    <div className="flex justify-between items-center bg-gray-50 p-2 rounded-lg">
+                                        <span className="text-sm font-medium text-gray-500">Prioridad:</span>
+                                        <TrafficLightPriority value={priority} onChange={setPriority} />
+                                    </div>
+
+                                    {/* RECURRENCE TOGGLE */}
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="checkbox"
+                                            id="recurring"
+                                            checked={isRecurring}
+                                            onChange={(e) => setIsRecurring(e.target.checked)}
+                                            className="w-4 h-4 text-brand-blue rounded border-gray-300 focus:ring-brand-blue"
+                                        />
+                                        <label htmlFor="recurring" className="text-sm text-gray-600 flex items-center gap-1 cursor-pointer select-none">
+                                            <Repeat size={16} className={isRecurring ? "text-brand-blue" : "text-gray-400"} />
+                                            Repetir Mensualmente
+                                        </label>
+                                    </div>
+                                    {isRecurring && (
+                                        <p className="text-xs text-brand-blue bg-blue-50 p-2 rounded">
+                                            {priority === 'medium'
+                                                ? "Empieza Amarillo, se vuelve Rojo el día 16."
+                                                : priority === 'low'
+                                                    ? "Verde -> Amarillo (día 11) -> Rojo (día 21)."
+                                                    : "Siempre prioridad Alta."}
+                                        </p>
+                                    )}
+
+                                    <div className="flex flex-col gap-2">
+                                        <div className="flex items-center gap-2 border border-gray-200 rounded p-2">
+                                            <Tag size={16} className="text-gray-400" />
+                                            <input type="text" placeholder="Agregar etiqueta..." value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => handleAddTagInput(e, false)} disabled={newTags.length >= 5} className="flex-1 bg-transparent text-sm outline-none" />
+                                        </div>
+                                        {newTags.length > 0 && (
+                                            <div className="flex flex-wrap gap-1">
+                                                {newTags.map(tag => (
+                                                    <span key={tag} className="inline-flex items-center text-xs bg-brand-light text-brand-navy px-2 py-1 rounded-full">
+                                                        {tag}<button type="button" onClick={() => removeTag(tag, false)} className="ml-1 hover:text-red-500">×</button>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2 border border-gray-200 rounded p-2">
+                                        <CalendarIcon size={16} className="text-gray-400" />
+                                        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="flex-1 bg-transparent text-sm outline-none text-gray-600" />
+                                    </div>
+                                </div>
+
+                                <button type="submit" disabled={!newTask} className="w-full bg-brand-navy hover:bg-brand-blue text-white py-3 rounded-xl font-medium transition-all shadow-md mt-2 flex items-center justify-center gap-2">
+                                    <Plus size={20} /> Agregar Tarea
+                                </button>
+                            </form>
+                        </div>
                     </div>
                 )}
 
+
                 {/* Controls */}
                 {!showReorder && (
-                    <div className="flex flex-col gap-4 mb-6">
+                    <div className="flex flex-col gap-4 mb-6 sticky top-[72px] z-40 bg-gray-50 py-2">
                         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                            <div className="flex space-x-1 bg-gray-200 p-1 rounded-lg w-full sm:w-fit">
+                            <div className="flex space-x-1 bg-gray-200 p-1 rounded-lg w-full sm:w-fit shadow-inner">
                                 <button onClick={() => { setActiveTab('pending'); setViewMode('list'); }} className={`flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'pending' ? 'bg-white text-brand-navy shadow-sm' : 'text-gray-600 hover:text-gray-800'}`}>Pendientes</button>
                                 <button onClick={() => { setActiveTab('completed'); setViewMode('list'); }} className={`flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center justify-center ${activeTab === 'completed' ? 'bg-white text-brand-navy shadow-sm' : 'text-gray-600 hover:text-gray-800'}`}>
                                     <Archive size={16} className="mr-1" /> Papelera
@@ -468,19 +475,19 @@ export default function Dashboard() {
                             </div>
 
                             {activeTab === 'pending' && (
-                                <div className="flex gap-2">
-                                    <button onClick={openReorderHelper} className="flex items-center gap-2 px-3 py-2 rounded-md bg-white text-gray-600 hover:bg-gray-100 shadow-sm transition-all" title="Organizar Prioridades">
+                                <div className="flex gap-2 w-full sm:w-auto justify-end">
+                                    <button onClick={openReorderHelper} className="flex items-center gap-2 px-3 py-2 rounded-md bg-white text-gray-600 hover:bg-gray-100 shadow-sm transition-all border border-gray-200" title="Organizar Prioridades">
                                         <ArrowUpDown size={18} />
                                         <span className="hidden sm:inline text-sm font-medium">Organizar</span>
                                     </button>
 
-                                    <button onClick={() => setShowFilters(!showFilters)} className={`flex items-center gap-2 px-3 py-2 rounded-md transition-all ${showFilters || filterTag !== 'all' || filterPriority !== 'all' ? 'bg-brand-light text-brand-navy border border-blue-100' : 'bg-white text-gray-600 hover:bg-gray-100 shadow-sm'}`}>
+                                    <button onClick={() => setShowFilters(!showFilters)} className={`flex items-center gap-2 px-3 py-2 rounded-md transition-all border ${showFilters || filterTag !== 'all' || filterPriority !== 'all' ? 'bg-brand-light text-brand-navy border-blue-200' : 'bg-white text-gray-600 hover:bg-gray-100 border-gray-200 shadow-sm'}`}>
                                         <Filter size={18} /> <span className="hidden sm:inline text-sm font-medium">Filtros</span>
                                     </button>
 
-                                    <div className="flex bg-gray-100 p-1 rounded-lg">
-                                        <button onClick={() => setViewMode('list')} className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white shadow text-brand-navy' : 'text-gray-500 hover:text-gray-700'}`}><List size={20} /></button>
-                                        <button onClick={() => setViewMode('calendar')} className={`p-2 rounded-md transition-all ${viewMode === 'calendar' ? 'bg-white shadow text-brand-navy' : 'text-gray-500 hover:text-gray-700'}`}><Grid size={20} /></button>
+                                    <div className="flex bg-white border border-gray-200 p-1 rounded-lg shadow-sm">
+                                        <button onClick={() => setViewMode('list')} className={`p-1.5 rounded transition-all ${viewMode === 'list' ? 'bg-gray-100 text-brand-navy' : 'text-gray-400 hover:text-gray-600'}`}><List size={20} /></button>
+                                        <button onClick={() => setViewMode('calendar')} className={`p-1.5 rounded transition-all ${viewMode === 'calendar' ? 'bg-gray-100 text-brand-navy' : 'text-gray-400 hover:text-gray-600'}`}><Grid size={20} /></button>
                                     </div>
                                 </div>
                             )}
@@ -488,7 +495,7 @@ export default function Dashboard() {
 
                         {/* Filter Menu */}
                         {showFilters && activeTab === 'pending' && (
-                            <div className="bg-white p-4 rounded-xl shadow-inner border border-gray-100 flex flex-col sm:flex-row gap-4">
+                            <div className="bg-white p-4 rounded-xl shadow-lg border border-gray-100 flex flex-col sm:flex-row gap-4 animate-fade-in">
                                 <div className="flex-1">
                                     <label className="text-xs font-bold text-gray-400 uppercase mb-1 block">Ordenar por</label>
                                     <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-full p-2 bg-gray-50 rounded border border-gray-200 text-sm focus:border-brand-blue outline-none">
