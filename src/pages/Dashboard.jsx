@@ -81,23 +81,32 @@ export default function Dashboard() {
                 ...doc.data()
             }));
 
-            // Validate Recurring Tasks Reset Logic
-            // If a recurring task is completed but the completion date was in a PREVIOUS month, reset it.
-            const now = new Date();
-            todosData.forEach(task => {
-                if (task.completed && task.recurrence && task.completedAt) {
-                    const completedDate = parseISO(task.completedAt);
-                    if (!isSameMonth(completedDate, now) && completedDate < now) {
-                        // Reset the task for the new month
-                        updateDoc(doc(db, 'todos', task.id), {
-                            completed: false,
-                            completedAt: null
-                        }).catch(err => console.error("Error resetting recurring task:", err));
-                    }
-                }
-            });
-
+            // 1. Update UI immediately so user sees tasks
             setTasks(todosData);
+            setLoading(false);
+
+            // 2. Run Background Maintenance (Reset Recurring Tasks)
+            // Wrap in try-catch to prevent UI from freezing/crashing if this fails
+            try {
+                const now = new Date();
+                todosData.forEach(task => {
+                    if (task.completed && task.recurrence && task.completedAt) {
+                        const completedDate = parseISO(task.completedAt);
+                        // Check if completed in a previous month
+                        if (!isSameMonth(completedDate, now) && completedDate < now) {
+                            console.log("Resetting recurring task:", task.text);
+                            updateDoc(doc(db, 'todos', task.id), {
+                                completed: false,
+                                completedAt: null
+                            }).catch(err => console.error("Error updating doc:", err));
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error("Error during recurrence reset check:", err);
+            }
+        }, (error) => {
+            console.error("Error fetching tasks:", error);
             setLoading(false);
         });
 
@@ -315,6 +324,16 @@ export default function Dashboard() {
         });
     }, [tasks, activeTab, filterTag, filterPriority, sortBy]);
 
+    // NEW: Priority Counts
+    const priorityCounts = useMemo(() => {
+        const pending = tasks.filter(t => !t.completed);
+        return {
+            high: pending.filter(t => calculateDynamicPriority(t) === 'high').length,
+            medium: pending.filter(t => calculateDynamicPriority(t) === 'medium').length,
+            low: pending.filter(t => calculateDynamicPriority(t) === 'low').length
+        };
+    }, [tasks]);
+
     // Styling
     const getPriorityColor = (task) => {
         const effectivePriority = calculateDynamicPriority(task);
@@ -344,19 +363,27 @@ export default function Dashboard() {
 
             <main className="flex-1 max-w-4xl mx-auto w-full p-4">
 
-                {/* Input Area */}
+                {/* Input Area / Counters */}
                 {activeTab === 'pending' && !showReorder && (
                     <div className="mb-6">
                         {!showAddForm ? (
-                            <button
-                                onClick={() => setShowAddForm(true)}
-                                className="w-full py-4 bg-white border-2 border-dashed border-gray-300 rounded-xl text-gray-500 font-medium hover:border-brand-blue hover:text-brand-blue transition-all flex items-center justify-center gap-2 shadow-sm"
-                            >
-                                <Plus size={24} />
-                                <span>Agregar Nueva Tarea</span>
-                            </button>
+                            // NEW: Counters display instead of Big Button
+                            <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-2">
+                                <div className="bg-white p-3 rounded-xl shadow-sm border-l-4 border-red-500 flex flex-col items-center">
+                                    <span className="text-2xl font-bold text-gray-800">{priorityCounts.high}</span>
+                                    <span className="text-xs text-gray-500 uppercase tracking-wide">Altas</span>
+                                </div>
+                                <div className="bg-white p-3 rounded-xl shadow-sm border-l-4 border-yellow-400 flex flex-col items-center">
+                                    <span className="text-2xl font-bold text-gray-800">{priorityCounts.medium}</span>
+                                    <span className="text-xs text-gray-500 uppercase tracking-wide">Medias</span>
+                                </div>
+                                <div className="bg-white p-3 rounded-xl shadow-sm border-l-4 border-green-500 flex flex-col items-center">
+                                    <span className="text-2xl font-bold text-gray-800">{priorityCounts.low}</span>
+                                    <span className="text-xs text-gray-500 uppercase tracking-wide">Bajas</span>
+                                </div>
+                            </div>
                         ) : (
-                            <div className="bg-white rounded-xl shadow-md p-6 animate-fade-in relative">
+                            <div className="bg-white rounded-xl shadow-md p-6 animate-fade-in relative transition-all">
                                 <button onClick={() => setShowAddForm(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
                                     <X size={20} />
                                 </button>
@@ -607,11 +634,11 @@ export default function Dashboard() {
                     </div>
                 )}
 
-                {/* Fixed FAB for Mobile */}
+                {/* Fixed FAB for Universal Access */}
                 {activeTab === 'pending' && !showAddForm && !showReorder && (
                     <button
                         onClick={() => setShowAddForm(true)}
-                        className="sm:hidden fixed bottom-6 right-6 w-14 h-14 bg-brand-navy text-white rounded-full shadow-xl flex items-center justify-center z-50 hover:scale-110 transition-transform"
+                        className="fixed bottom-6 right-6 w-14 h-14 bg-brand-navy text-white rounded-full shadow-xl flex items-center justify-center z-50 hover:scale-110 transition-transform"
                     >
                         <Plus size={32} />
                     </button>
