@@ -580,7 +580,7 @@ export default function Dashboard() {
                             </div>
                         ) : (
                             processedTasks.map(task => (
-                                <div key={task.id} className={`p-4 rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-start justify-between group transition-all hover:shadow-md ${task.completed ? 'bg-gray-100 opacity-75' : getPriorityColor(task)}`}>
+                                <div key={task.id} className={`relative p-4 rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-start justify-between group transition-all hover:shadow-md ${task.completed ? 'bg-gray-100 opacity-75' : getPriorityColor(task)}`}>
                                     <div className="flex items-start sm:items-center gap-3 flex-1 w-full relative">
                                         <button onClick={() => toggleComplete(task)} className={`mt-1 sm:mt-0 transition-colors ${task.completed ? 'text-green-500' : 'text-gray-400 hover:text-brand-blue'}`} disabled={editingId === task.id}>{task.completed ? <RefreshCcw size={24} /> : <Circle size={24} />}</button>
                                         <div className="flex-1 w-full min-w-0 pr-8 sm:pr-0">
