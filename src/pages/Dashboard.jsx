@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db, auth } from '../lib/firebase';
 import { collection, addDoc, query, where, onSnapshot, updateDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
-import { LogOut, Plus, Trash2, Circle, Calendar as CalendarIcon, Archive, RefreshCcw, Pencil, X, Save, List, Grid, Filter, Tag, ArrowUpDown, XCircle, ChevronUp, ChevronDown, Check, Repeat, Settings } from 'lucide-react';
+import { LogOut, Plus, Trash2, Circle, Calendar as CalendarIcon, Archive, RefreshCcw, Pencil, X, Save, List, Grid, Filter, Tag, ArrowUpDown, XCircle, ChevronUp, ChevronDown, Check, Repeat, Settings, MoreVertical } from 'lucide-react';
 import TrafficLightPriority from '../components/TrafficLightPriority';
 import GoogleCalendarBtn from '../components/GoogleCalendarBtn';
 import CalendarView from '../components/CalendarView';
@@ -20,7 +20,7 @@ export default function Dashboard() {
     const [date, setDate] = useState('');
     const [tagInput, setTagInput] = useState('');
     const [newTags, setNewTags] = useState([]);
-    const [isRecurring, setIsRecurring] = useState(false); // NEW: Recurrence Toggle
+    const [isRecurring, setIsRecurring] = useState(false);
 
     // UI State
     const [activeTab, setActiveTab] = useState('pending'); // 'pending' | 'completed'
@@ -29,10 +29,13 @@ export default function Dashboard() {
     const [showFilters, setShowFilters] = useState(false);
     const [showReorder, setShowReorder] = useState(false);
 
+    // NEW: Action Menu State
+    const [activeActionMenuId, setActiveActionMenuId] = useState(null);
+
     // Filters & Sort
     const [filterTag, setFilterTag] = useState('all');
     const [filterPriority, setFilterPriority] = useState('all');
-    const [sortBy, setSortBy] = useState('priority'); // 'priority', 'manual', 'createdAt', 'dueDate', 'alphabetical'
+    const [sortBy, setSortBy] = useState('priority');
 
     // Editing State
     const [editingId, setEditingId] = useState(null);
@@ -121,6 +124,9 @@ export default function Dashboard() {
         }
     }, [showReorder, tasks]);
 
+    // Close action menu when clicking outside (simple implementation via global click is tricky in react without refs, 
+    // but we can just rely on the 'X' button or toggling another one)
+
     // --- Helpers ---
 
     const handleAddTask = async (e) => {
@@ -204,6 +210,7 @@ export default function Dashboard() {
     // Edit Logic
     const startEditing = (task) => {
         setEditingId(task.id);
+        setActiveActionMenuId(null); // Close menu
         setEditText(task.text);
         setEditDate(task.dueDate || '');
         setEditTags(task.tags || []);
@@ -347,7 +354,8 @@ export default function Dashboard() {
             <nav className="bg-white shadow-sm p-4 flex justify-between items-center sticky top-0 z-50">
                 <h1 className="text-xl font-bold text-brand-navy flex items-center">
                     <img src="/logo.png" alt="Agendeer Logo" className="h-10 w-auto mr-2 object-contain" />
-                    <span className="tracking-tight uppercase hidden sm:inline">Agendeer</span>
+                    {/* MODIFIED: Always visible */}
+                    <span className="tracking-tight uppercase">Agendeer</span>
                 </h1>
 
                 {/* NEW: Counters in Navbar */}
@@ -513,7 +521,7 @@ export default function Dashboard() {
                     </div>
                 )}
 
-                {/* Reorder Drawer */}
+                {/* Reorder Drawer - Unchanged */}
                 {showReorder && (
                     <div className="bg-white rounded-xl shadow-lg p-6 mb-6 border-2 border-brand-light">
                         <div className="flex justify-between items-center mb-4 border-b pb-2">
@@ -572,10 +580,10 @@ export default function Dashboard() {
                             </div>
                         ) : (
                             processedTasks.map(task => (
-                                <div key={task.id} className={`p-4 rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-center justify-between group transition-all hover:shadow-md ${task.completed ? 'bg-gray-100 opacity-75' : getPriorityColor(task)}`}>
-                                    <div className="flex items-start sm:items-center gap-3 flex-1 w-full">
+                                <div key={task.id} className={`p-4 rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-start justify-between group transition-all hover:shadow-md ${task.completed ? 'bg-gray-100 opacity-75' : getPriorityColor(task)}`}>
+                                    <div className="flex items-start sm:items-center gap-3 flex-1 w-full relative">
                                         <button onClick={() => toggleComplete(task)} className={`mt-1 sm:mt-0 transition-colors ${task.completed ? 'text-green-500' : 'text-gray-400 hover:text-brand-blue'}`} disabled={editingId === task.id}>{task.completed ? <RefreshCcw size={24} /> : <Circle size={24} />}</button>
-                                        <div className="flex-1 w-full min-w-0">
+                                        <div className="flex-1 w-full min-w-0 pr-8 sm:pr-0">
                                             {editingId === task.id ? (
                                                 <div className="flex flex-col gap-3 w-full mr-2">
                                                     <input type="text" value={editText} onChange={(e) => setEditText(e.target.value)} className="w-full p-2 bg-white/50 border-b-2 border-brand-blue outline-none text-lg text-gray-800 rounded-t" autoFocus onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(task.id); if (e.key === 'Escape') cancelEditing(); }} />
@@ -596,18 +604,21 @@ export default function Dashboard() {
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <div className="flex flex-col gap-0.5">
-                                                    <div className="flex items-center gap-2">
-                                                        <p className={`text-lg transition-all break-words ${task.completed ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.text}</p>
-                                                        {task.recurrence && activeTab === 'pending' && <Repeat size={14} className="text-brand-blue" title="Se repite mensualmente" />}
+                                                <div className="flex flex-col gap-1">
+                                                    {/* Title & Loop Icon */}
+                                                    <div className="flex items-start gap-2 pr-4 sm:pr-0">
+                                                        <p className={`text-lg transition-all break-words leading-tight ${task.completed ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.text}</p>
+                                                        {task.recurrence && activeTab === 'pending' && <Repeat size={14} className="text-brand-blue mt-1.5 flex-shrink-0" title="Se repite mensualmente" />}
                                                     </div>
+
+                                                    {/* Tags Row */}
                                                     {task.tags && task.tags.length > 0 && (
-                                                        <div className="flex flex-wrap gap-1">{task.tags.map(tag => (<span key={tag} onClick={() => activeTab === 'pending' && !editingId && setFilterTag(tag)} className={`inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full bg-white/60 text-brand-navy border border-black/5 ${activeTab === 'pending' && !editingId ? 'cursor-pointer hover:bg-white' : ''}`}># {tag}</span>))}</div>
+                                                        <div className="flex flex-wrap gap-1 mt-0.5">{task.tags.map(tag => (<span key={tag} onClick={() => activeTab === 'pending' && !editingId && setFilterTag(tag)} className={`inline-flex items-center text-[10px] font-medium px-2 py-0.5 rounded-full bg-white/60 text-brand-navy border border-black/5 ${activeTab === 'pending' && !editingId ? 'cursor-pointer hover:bg-white' : ''}`}># {tag}</span>))}</div>
                                                     )}
                                                 </div>
                                             )}
                                             {!editingId && (
-                                                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 mt-1">
+                                                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 mt-2">
                                                     {task.dueDate && <span className="flex items-center text-orange-600 bg-orange-50 px-2 py-0.5 rounded"><CalendarIcon size={12} className="mr-1" />{format(new Date(task.dueDate), 'dd MMM yyyy', { locale: es })}</span>}
                                                     {!task.completed && task.dueDate && <div className="hidden sm:block"><GoogleCalendarBtn title={task.text} date={task.dueDate} /></div>}
                                                     {task.completed && task.completedAt && <span className="text-gray-400 italic">Borrado automático en {30 - differenceInDays(new Date(), parseISO(task.completedAt))} días</span>}
@@ -616,23 +627,50 @@ export default function Dashboard() {
                                             {!task.completed && task.dueDate && !editingId && <div className="sm:hidden mt-2"><GoogleCalendarBtn title={task.text} date={task.dueDate} /></div>}
                                         </div>
                                     </div>
-                                    {/* Actions */}
-                                    <div className="flex items-center justify-end w-full sm:w-auto mt-3 sm:mt-0 border-t sm:border-0 pt-2 sm:pt-0 gap-1">
+
+                                    {/* Actions: Replaced logic with Settings Menu */}
+                                    <div className="flex items-center justify-end w-auto mt-0 sm:mt-0 gap-1 absolute top-4 right-2 sm:static">
                                         {editingId === task.id ? (
                                             <div className="flex items-center gap-2 w-full justify-end">
-                                                <button onClick={() => saveEdit(task.id)} className="p-2 text-green-600 hover:bg-green-50 rounded-full transition-colors flex items-center"><Save size={18} /><span className="sm:hidden ml-1 font-medium">Guardar</span></button>
-                                                <button onClick={cancelEditing} className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors flex items-center"><X size={18} /><span className="sm:hidden ml-1 font-medium">Cancelar</span></button>
+                                                <button onClick={() => saveEdit(task.id)} className="p-2 text-green-600 hover:bg-green-50 rounded-full transition-colors flex items-center"><Save size={18} /></button>
+                                                <button onClick={cancelEditing} className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors flex items-center"><X size={18} /></button>
                                             </div>
                                         ) : (
-                                            <div className="flex items-center justify-end w-full sm:w-auto gap-1">
-                                                {/* Automation Management */}
-                                                {task.recurrence && !task.completed && (
-                                                    <button onClick={() => removeAutomation(task.id)} className="p-2 text-gray-400 hover:text-purple-500 transition-colors flex items-center" title="Configurar Automatización"><Settings size={18} /></button>
-                                                )}
+                                            /* NEW ACTION MENU LOGIC */
+                                            (!task.completed || activeTab === 'completed') && (
+                                                <div className="relative">
+                                                    {activeActionMenuId === task.id ? (
+                                                        /* Expanded Menu */
+                                                        <div className="flex items-center gap-1 bg-white p-1 rounded-lg shadow-md border border-gray-200 animate-fade-in absolute right-0 -top-1 sm:-top-1.5 z-10 w-max">
 
-                                                {!task.completed && <button onClick={() => startEditing(task)} className="p-2 text-gray-400 hover:text-brand-blue transition-colors flex items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100"><Pencil size={18} /><span className="sm:hidden ml-1 text-sm">Editar</span></button>}
-                                                <button onClick={() => deleteTask(task.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors flex items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100"><Trash2 size={18} /><span className="sm:hidden ml-1 text-sm">Eliminar</span></button>
-                                            </div>
+                                                            {/* Automation - Only if recurring */}
+                                                            {task.recurrence && !task.completed && (
+                                                                <button onClick={() => removeAutomation(task.id)} className="p-2 text-purple-500 hover:bg-purple-50 rounded-full" title="Configurar"><Settings size={18} /></button>
+                                                            )}
+
+                                                            {/* Edit - Only if pending */}
+                                                            {!task.completed && (
+                                                                <button onClick={() => startEditing(task)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-full" title="Editar"><Pencil size={18} /></button>
+                                                            )}
+
+                                                            {/* Delete - Always */}
+                                                            <button onClick={() => deleteTask(task.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-full" title="Eliminar"><Trash2 size={18} /></button>
+
+                                                            {/* Close Menu */}
+                                                            <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                                                            <button onClick={() => setActiveActionMenuId(null)} className="p-1 px-2 text-gray-400 hover:text-gray-600"><X size={14} /></button>
+                                                        </div>
+                                                    ) : (
+                                                        /* Settings Trigger Icon */
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); setActiveActionMenuId(activeActionMenuId === task.id ? null : task.id); }}
+                                                            className="p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-blue rounded-full transition-colors"
+                                                        >
+                                                            <Settings size={20} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )
                                         )}
                                     </div>
                                 </div>
